@@ -108,6 +108,16 @@
         -ms-interpolation-mode: bicubic;            /* IE                            */        
       }
 
+      /* Custom: keep the game canvas fixed and centered so it always fills the viewport */
+      #canvas {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
       canvas.active {
         animation-name: fadeIn;
         animation-duration: 2s;
@@ -921,7 +931,7 @@
 
       function manifestFilesMD5()
       {
-        return [ "d4c9e69945108f71ca7209040acc09f6",
+        return [ "b2a1ae9d518a1d8801e88a299b009318",
 "5473f0cbbed6ab1b92bb8068e1c23682",
 "974de43c7679838b00db32032d23f470",
 "e8f1e8db8cf996f8715a6f2164c2e44e",
@@ -946,7 +956,7 @@
 "f012a5df54b62c5bbf0e29741888f7b9",
 "15dea5b12b6dedf7c72f5b9ce6727de6",
 "52d7be2003b8f70ab8edae19a288cfc7",
-"aba50eb29c0489eb230eddfc1bd234c2" ];
+"732c74196b2616d1d4e97e77d78c72e7" ];
       }
 
       function onFirstFrameRendered()
@@ -1637,8 +1647,160 @@
 
         wallpaper_update_config(JSON.stringify(wallpaperConfig));
       }
+
+      /* Custom: fill the whole screen (letterboxed).
+       * The game calls window_set_size() (e.g. 1152x648) and the runner applies its own
+       * inline margins/padding; both resize/reposition the canvas and fight our
+       * fullscreen sizing, which shows up as the game pinned to the top-left corner with
+       * black bars bottom/right. We force fixed positioning, zero margins and a fullscreen
+       * size via inline styles, and a MutationObserver re-asserts it whenever the game or
+       * runner touches the canvas. */
+      var fitApplying = false;
+      var lastFitW = -1;
+      var lastFitH = -1;
+
+      function applyCanvasPosition() {
+        if (canvasElement === undefined) {
+          return;
+        }
+        canvasElement.style.position = "fixed";
+        canvasElement.style.top = "50%";
+        canvasElement.style.left = "50%";
+        canvasElement.style.transform = "translate(-50%, -50%)";
+        canvasElement.style.margin = "0";
+        canvasElement.style.padding = "0";
+      }
+
+      function fitGameToScreen() {
+        if (canvasElement === undefined || fitApplying) {
+          return;
+        }
+        fitApplying = true;
+        try {
+          applyCanvasPosition();
+
+          var aspect = null;
+          if (startingWidth && startingHeight) {
+            aspect = startingWidth / startingHeight;
+          } else {
+            var nativeW = canvasElement.width;
+            var nativeH = canvasElement.height;
+            if (nativeW > 1 && nativeH > 1) {
+              aspect = nativeW / nativeH;
+            }
+          }
+          if (!aspect) {
+            return;
+          }
+
+          var maxW = window.innerWidth;
+          var maxH = window.innerHeight;
+          var newW, newH;
+          if (maxW / maxH > aspect) {
+            newH = maxH;
+            newW = maxH * aspect;
+          } else {
+            newW = maxW;
+            newH = maxW / aspect;
+          }
+
+          newW = Math.floor(newW);
+          newH = Math.floor(newH);
+
+          if (newW !== lastFitW || newH !== lastFitH) {
+            lastFitW = newW;
+            lastFitH = newH;
+            console.log("[fit] canvas -> " + newW + "x" + newH +
+              " (viewport " + maxW + "x" + maxH +
+              ", aspect " + aspect.toFixed(4) +
+              ", starting " + startingWidth + "x" + startingHeight +
+              ", native " + canvasElement.width + "x" + canvasElement.height +
+              ", actual client " + canvasElement.clientWidth + "x" + canvasElement.clientHeight + ")");
+          }
+
+          canvasElement.style.width = newW + "px";
+          canvasElement.style.height = newH + "px";
+        } finally {
+          fitApplying = false;
+        }
+      }
+
+      window.addEventListener("resize", function () {
+        window.requestAnimationFrame(fitGameToScreen);
+      });
+
+      (function startFitLoop() {
+        fitGameToScreen();
+        setTimeout(startFitLoop, 500);
+      })();
+
+      if (canvasElement !== undefined && window.MutationObserver) {
+        new MutationObserver(function () {
+          if (fitApplying) {
+            return;
+          }
+          console.log("[fit] canvas resized by game/runner, re-asserting");
+          window.requestAnimationFrame(fitGameToScreen);
+        }).observe(canvasElement, { attributes: true, attributeFilter: ["style", "width", "height"] });
+      }
     </script>
     <script async type="text/javascript" src="runner.js"></script>
+
+    <script>
+      /* Custom fullscreen fit v2: independent of the main script (runs even if that block
+       * throws). Uses !important inline styles + polling + re-query of the canvas so the
+       * game's window_set_size / runner sizing can never permanently override it. */
+      (function () {
+        var lastClient = "";
+        function fit() {
+          try {
+            var c = document.getElementById("canvas");
+            if (!c) {
+              return;
+            }
+            var vw = window.innerWidth;
+            var vh = window.innerHeight;
+            var aspect = 16 / 9;
+            var nw = c.width;
+            var nh = c.height;
+            if (nw >= 320 && nh >= 180 && nw / nh > 1.3 && nw / nh < 2.2) {
+              aspect = nw / nh;
+            }
+            var w, h;
+            if (vw / vh > aspect) {
+              h = vh;
+              w = vh * aspect;
+            } else {
+              w = vw;
+              h = vw / aspect;
+            }
+            w = Math.floor(w);
+            h = Math.floor(h);
+            c.style.setProperty("position", "fixed", "important");
+            c.style.setProperty("top", "50%", "important");
+            c.style.setProperty("left", "50%", "important");
+            c.style.setProperty("transform", "translate(-50%, -50%)", "important");
+            c.style.setProperty("margin", "0", "important");
+            c.style.setProperty("padding", "0", "important");
+            c.style.setProperty("width", w + "px", "important");
+            c.style.setProperty("height", h + "px", "important");
+            var key = c.clientWidth + "x" + c.clientHeight +
+              " (css " + c.style.width + "x" + c.style.height +
+              ", native " + c.width + "x" + c.height +
+              ", viewport " + vw + "x" + vh + ")";
+            if (key !== lastClient) {
+              lastClient = key;
+              console.log("[fit2] canvas now " + key);
+            }
+          } catch (err) {
+            console.log("[fit2] error: " + err);
+          }
+        }
+        window.addEventListener("resize", fit);
+        setInterval(fit, 300);
+        fit();
+      })();
+    </script>
 
     <!-- Custom BodyEnd code is injected here -->
     
